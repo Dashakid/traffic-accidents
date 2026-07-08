@@ -1,0 +1,60 @@
+{
+  "patch_rules": {
+    "2021:accident.csv:ST_CASE": "CASE_NUM",
+    "2021:person.csv:ST_CASE": "CASE_NUM",
+    "2021:person.csv:INJ_SEV": "SEVERITY"
+  },
+  "verification_status": {
+    "2021": {
+      "verified": true,
+      "iteration": 2,
+      "timestamp": "2026-07-08T19:31:28.810903",
+      "message": "Successfully validated"
+    },
+    "2022": {
+      "verified": true,
+      "iteration": 1,
+      "timestamp": "2026-07-08T19:31:28.806969",
+      "message": "Successfully validated"
+    },
+    "2023": {
+      "verified": true,
+      "iteration": 1,
+      "timestamp": "2026-07-08T19:31:28.807954",
+      "message": "Successfully validated"
+    },
+    "2024": {
+      "verified": true,
+      "iteration": 1,
+      "timestamp": "2026-07-08T19:31:28.808918",
+      "message": "Successfully validated"
+    }
+  },
+  "anomalies": [
+    {
+      "year": 2021,
+      "file": "accident.csv",
+      "expected_col": "ST_CASE",
+      "actual_col": "CASE_NUM",
+      "timestamp": "2026-07-08T19:31:28.805189",
+      "patch_applied": true
+    },
+    {
+      "year": 2021,
+      "file": "person.csv",
+      "expected_col": "ST_CASE",
+      "actual_col": "CASE_NUM",
+      "timestamp": "2026-07-08T19:31:28.805552",
+      "patch_applied": true
+    },
+    {
+      "year": 2021,
+      "file": "person.csv",
+      "expected_col": "INJ_SEV",
+      "actual_col": "SEVERITY",
+      "timestamp": "2026-07-08T19:31:28.805594",
+      "patch_applied": true
+    }
+  ],
+  "generated_timestamp": "2026-07-08T19:31:28.813620"
+}
