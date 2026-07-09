@@ -287,7 +287,7 @@ with st.sidebar:
     st.markdown(
         "- **Where** – fatalities by state\n"
         "- **When** – weekday vs. weekend\n"
-        "- **Global context** – how the US compares worldwide\n"
+        "- **All 50 states** – complete state-by-state ranking\n"
         "- **Explore data** – filter and download records"
     )
 
@@ -335,8 +335,8 @@ st.caption("Made by **Gian-Carlo Javier**")
 st.markdown(data_source)  # Display data source badge at top
 st.markdown(
     f"Exploring **where** and **when** motorcyclist fatalities happen across the "
-    f"United States and Puerto Rico in **{selected_year}**, and how the US fits "
-    f"into the **global** road-safety picture."
+    f"United States and Puerto Rico in **{selected_year}**, with a full breakdown "
+    f"across **all 50 states**."
 )
 
 # Clarify that this is filtered motorcycle data from NHTSA
@@ -357,8 +357,8 @@ st.markdown("---")
 # ============================================================================
 # TABS — guided narrative
 # ============================================================================
-tab_where, tab_when, tab_global, tab_data = st.tabs(
-    ["📍 Where", "🕒 When", "🌍 Global context", "🔎 Explore data"]
+tab_where, tab_when, tab_states, tab_data = st.tabs(
+    ["📍 Where", "🕒 When", "📊 All 50 states", "🔎 Explore data"]
 )
 
 # ----------------------------------------------------------------------------
@@ -467,61 +467,61 @@ with tab_when:
     )
 
 # ----------------------------------------------------------------------------
-# GLOBAL CONTEXT — WHO
+# ALL 50 STATES — full ranking
 # ----------------------------------------------------------------------------
-with tab_global:
-    st.subheader("How does the US compare globally?")
+with tab_states:
+    st.subheader(f"All 50 states ranked ({selected_year})")
     st.markdown(
-        "Countries where motorcycles make up a large share of the vehicle fleet "
-        "also see a large share of road deaths among riders. The US and Puerto "
-        "Rico sit at the low-exposure end of this spectrum."
+        "Every state (plus D.C. and Puerto Rico where reported), ranked by "
+        "motorcyclist fatalities. This is the complete picture — not just the top 10."
     )
 
-    fig_scatter = px.scatter(
-        global_baseline_df,
-        x='motorcycle_fleet_pct',
-        y='fatality_share_pct',
-        text='Country',
-        size='fatality_share_pct',
-        color='region',
-        labels={
-            'motorcycle_fleet_pct': 'Motorcycles as % of vehicle fleet',
-            'fatality_share_pct': 'Motorcyclists as % of road deaths',
-            'region': 'Region'
-        }
-    )
-    fig_scatter.update_traces(textposition='top center')
-    fig_scatter.update_layout(margin=dict(l=0, r=0, t=10, b=0))
-    st.plotly_chart(fig_scatter, use_container_width=True)
+    # Full ranking of every state present in the data
+    all_states = state_counts.copy()
+    all_states['Share %'] = (all_states['Fatalities'] / total_deaths * 100).round(1)
 
-    col1, col2 = st.columns(2)
-    with col1:
-        fig_fleet = px.bar(
-            global_baseline_df.sort_values('motorcycle_fleet_pct'),
-            x='motorcycle_fleet_pct', y='Country', orientation='h',
-            title='Motorcycles as % of vehicle fleet',
-            color='motorcycle_fleet_pct', color_continuous_scale='Blues',
-            text='motorcycle_fleet_pct'
-        )
-        fig_fleet.update_layout(coloraxis_showscale=False, yaxis_title=None,
-                                margin=dict(l=0, r=0, t=40, b=0))
-        st.plotly_chart(fig_fleet, use_container_width=True)
-    with col2:
-        fig_share = px.bar(
-            global_baseline_df.sort_values('fatality_share_pct'),
-            x='fatality_share_pct', y='Country', orientation='h',
-            title='Motorcyclists as % of road deaths',
-            color='fatality_share_pct', color_continuous_scale='Reds',
-            text='fatality_share_pct'
-        )
-        fig_share.update_layout(coloraxis_showscale=False, yaxis_title=None,
-                                margin=dict(l=0, r=0, t=40, b=0))
-        st.plotly_chart(fig_share, use_container_width=True)
+    # Summary metrics
+    m1, m2, m3 = st.columns(3)
+    m1.metric("States reporting", f"{len(all_states)}")
+    m2.metric("Total fatalities", f"{total_deaths:,}")
+    avg_per_state = total_deaths / len(all_states) if len(all_states) else 0
+    m3.metric("Average per state", f"{avg_per_state:.0f}")
+
+    # Full bar chart — all states, tall so every state is readable
+    ranked = all_states.sort_values('Fatalities')
+    fig_all = px.bar(
+        ranked,
+        x='Fatalities',
+        y='State',
+        orientation='h',
+        color='Fatalities',
+        color_continuous_scale='Reds',
+        text='Fatalities',
+    )
+    fig_all.update_layout(
+        margin=dict(l=0, r=0, t=10, b=0),
+        coloraxis_showscale=False,
+        yaxis_title=None,
+        height=max(500, 22 * len(ranked)),  # grow with number of states
+    )
+    st.plotly_chart(fig_all, use_container_width=True)
+
+    # Full ranked table with rank + share
+    table = all_states.sort_values('Fatalities', ascending=False).reset_index(drop=True)
+    table.insert(0, 'Rank', table.index + 1)
+    st.markdown("**Complete ranking**")
+    st.dataframe(
+        table[['Rank', 'State', 'Fatalities', 'Share %']],
+        use_container_width=True,
+        hide_index=True,
+    )
 
     st.info(
-        "**Takeaway:** In Thailand and Vietnam, riders make up **70–80%** of road "
-        "deaths. In the US, motorcyclists are roughly **8%** — but they remain a "
-        "high-risk group relative to their small share of the fleet."
+        f"**Takeaway:** In {selected_year}, **{top_state}** led all states. "
+        f"The top 3 states alone account for "
+        f"**{all_states.head(3)['Fatalities'].sum() / total_deaths * 100:.0f}%** "
+        f"of all motorcyclist fatalities, while the average state saw about "
+        f"**{avg_per_state:.0f}**."
     )
 
 # ----------------------------------------------------------------------------
@@ -536,8 +536,10 @@ with tab_data:
     view = fars_data if pick == "All" else fars_data[fars_data['State'] == pick]
     st.caption(f"Showing **{len(view):,}** records"
                + ("" if pick == "All" else f" for **{pick}**"))
+    display_cols = [c for c in ['State', 'Region', 'Day', 'Time Window', 'YEAR']
+                    if c in view.columns]
     st.dataframe(
-        view[['State', 'Region', 'Day', 'Time Window', 'ST_CASE']],
+        view[display_cols],
         use_container_width=True, hide_index=True
     )
 
