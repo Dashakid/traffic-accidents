@@ -131,12 +131,17 @@ def has_real_data() -> bool:
     data_dir = os.path.join(os.getcwd(), "traffic-accidents")
     acc_exists = os.path.exists(os.path.join(data_dir, "accident.csv"))
     per_exists = os.path.exists(os.path.join(data_dir, "person.csv"))
-    return acc_exists and per_exists
+    veh_exists = os.path.exists(os.path.join(data_dir, "vehicle.csv"))
+    return acc_exists and per_exists and veh_exists
 
 
 @st.cache_data
 def load_real_fars_data(year: int, severity_filter: str = 'fatalities') -> pd.DataFrame:
-    """Load real NHTSA FARS data from local CSV files."""
+    """Load real NHTSA FARS data from local CSV files.
+    
+    Motorcycles identified by BODY_TYP codes in vehicle.csv (80, 82, 83, 85, 87, 88),
+    not by PER_TYP which is unreliable in FARS.
+    """
     data_dir = os.path.join(os.getcwd(), "traffic-accidents")
     acc_df = pd.read_csv(os.path.join(data_dir, "accident.csv"), low_memory=False)
     per_df = pd.read_csv(os.path.join(data_dir, "person.csv"), low_memory=False)
@@ -149,11 +154,26 @@ def load_real_fars_data(year: int, severity_filter: str = 'fatalities') -> pd.Da
     if 'YEAR' in acc_df.columns:
         acc_df = acc_df[acc_df['YEAR'] == year]
     
-    # Merge on case ID
-    merged = acc_df.merge(per_df, on='ST_CASE', how='inner')
+    # Merge person and accident data on case ID
+    merged = per_df.merge(acc_df[['ST_CASE', 'STATE', 'DAY_WEEK']], 
+                          on='ST_CASE', how='inner', suffixes=('', '_acc'))
     
-    # Filter: motorcyclists (PER_TYP == 4)
-    merged = merged[merged['PER_TYP'] == 4].copy()
+    # CRITICAL: Filter for motorcycles by BODY_TYP from vehicle.csv
+    # Motorcycle body types: 80, 82, 83, 85, 87, 88 (5,999 vehicles)
+    # Note: PER_TYP==4 only yields ~50 records and is unreliable
+    veh_path = os.path.join(data_dir, "vehicle.csv")
+    if os.path.exists(veh_path):
+        veh_df = pd.read_csv(veh_path, low_memory=False)
+        veh_df.columns = [c.upper() for c in veh_df.columns]
+        # Filter vehicle data for motorcycles
+        motorcycle_body_types = [80, 82, 83, 85, 87, 88]
+        veh_df = veh_df[veh_df['BODY_TYP'].isin(motorcycle_body_types)]
+        # Merge with person data to get motorcycle riders only
+        merged = merged.merge(veh_df[['ST_CASE', 'VEH_NO']], 
+                             on=['ST_CASE', 'VEH_NO'], how='inner')
+    else:
+        # Fallback (less accurate): Use person type
+        merged = merged[merged['PER_TYP'] == 4]
     
     # Filter by severity
     if severity_filter == 'fatalities':
