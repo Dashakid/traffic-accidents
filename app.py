@@ -122,79 +122,52 @@ def get_global_baseline():
 
 
 # ============================================================================
-# REAL DATA DETECTION (checks for NHTSA FARS CSV files)
+# REAL DATA DETECTION (uses pre-built slim motorcycle dataset)
 # ============================================================================
 import os
 
+# Path to the slim, deployable dataset built by build_dataset.py
+# Contains motorcycle riders only (National + Puerto Rico, all years),
+# small enough to ship on GitHub / Streamlit Cloud.
+DATA_FILE = os.path.join(os.getcwd(), "traffic-accidents", "motorcycle_data.csv")
+
+
 def has_real_data() -> bool:
-    """Check if real NHTSA FARS data files exist locally."""
-    data_dir = os.path.join(os.getcwd(), "traffic-accidents")
-    acc_exists = os.path.exists(os.path.join(data_dir, "accident.csv"))
-    per_exists = os.path.exists(os.path.join(data_dir, "person.csv"))
-    veh_exists = os.path.exists(os.path.join(data_dir, "vehicle.csv"))
-    return acc_exists and per_exists and veh_exists
+    """Check if the pre-built real motorcycle dataset exists."""
+    return os.path.exists(DATA_FILE)
 
 
 @st.cache_data
 def load_real_fars_data(year: int, severity_filter: str = 'fatalities') -> pd.DataFrame:
-    """Load real NHTSA FARS data from local CSV files.
-    
-    Motorcycles identified by BODY_TYP codes in vehicle.csv (80, 82, 83, 85, 87, 88),
-    not by PER_TYP which is unreliable in FARS.
+    """Load the pre-built slim NHTSA FARS motorcycle dataset.
+
+    Data was pre-processed by build_dataset.py: NHTSA FARS person/accident/vehicle
+    files merged, filtered to motorcyclists via BODY_TYP codes (80,82,83,85,87,88),
+    combined across National + Puerto Rico. Only needed columns are kept so the
+    file is small enough to deploy on Streamlit Cloud.
     """
-    data_dir = os.path.join(os.getcwd(), "traffic-accidents")
-    acc_df = pd.read_csv(os.path.join(data_dir, "accident.csv"), low_memory=False)
-    per_df = pd.read_csv(os.path.join(data_dir, "person.csv"), low_memory=False)
-    
-    # Standardize column names
-    acc_df.columns = [c.upper() for c in acc_df.columns]
-    per_df.columns = [c.upper() for c in per_df.columns]
-    
-    # Filter by year if available
-    if 'YEAR' in acc_df.columns:
-        acc_df = acc_df[acc_df['YEAR'] == year]
-    
-    # Merge person and accident data on case ID
-    merged = per_df.merge(acc_df[['ST_CASE', 'STATE', 'DAY_WEEK']], 
-                          on='ST_CASE', how='inner', suffixes=('', '_acc'))
-    
-    # CRITICAL: Filter for motorcycles by BODY_TYP from vehicle.csv
-    # Motorcycle body types: 80, 82, 83, 85, 87, 88 (5,999 vehicles)
-    # Note: PER_TYP==4 only yields ~50 records and is unreliable
-    veh_path = os.path.join(data_dir, "vehicle.csv")
-    if os.path.exists(veh_path):
-        veh_df = pd.read_csv(veh_path, low_memory=False)
-        veh_df.columns = [c.upper() for c in veh_df.columns]
-        # Filter vehicle data for motorcycles
-        motorcycle_body_types = [80, 82, 83, 85, 87, 88]
-        veh_df = veh_df[veh_df['BODY_TYP'].isin(motorcycle_body_types)]
-        # Merge with person data to get motorcycle riders only
-        merged = merged.merge(veh_df[['ST_CASE', 'VEH_NO']], 
-                             on=['ST_CASE', 'VEH_NO'], how='inner')
-    else:
-        # Fallback (less accurate): Use person type
-        merged = merged[merged['PER_TYP'] == 4]
-    
-    # Filter by severity
+    df = pd.read_csv(DATA_FILE)
+
+    # Filter by year
+    if 'YEAR' in df.columns:
+        df = df[df['YEAR'] == year]
+
+    # Filter by severity (INJ_SEV == 4 means fatal)
     if severity_filter == 'fatalities':
-        merged = merged[merged['INJ_SEV'] == 4]
-    
-    # Map state codes to names
-    if 'STATE' in merged.columns:
-        merged['State'] = merged['STATE'].map(STATE_CODE_TO_NAME)
-    
-    # Add region indicator
-    merged['Region'] = merged['STATE'].apply(
-        lambda x: 'Puerto Rico' if x == 72 else 'US Mainland'
-    )
-    
-    # Add time window (weekday vs weekend)
-    if 'DAY_WEEK' in merged.columns:
-        merged['Time Window'] = merged['DAY_WEEK'].apply(
-            lambda x: 'Weekend (Fri–Sun)' if x in [1, 6, 7] else 'Weekday (Mon–Thu)'
-        )
-    
-    return merged.reset_index(drop=True)
+        df = df[df['INJ_SEV'] == 4]
+
+    return df.reset_index(drop=True)
+
+
+def available_years() -> list:
+    """Return the list of years present in the real dataset (fallback to defaults)."""
+    if has_real_data():
+        try:
+            years = pd.read_csv(DATA_FILE, usecols=['YEAR'])['YEAR'].unique()
+            return sorted(int(y) for y in years)
+        except Exception:
+            pass
+    return [2021, 2022, 2023, 2024]
 
 
 # ============================================================================
@@ -296,8 +269,8 @@ with st.sidebar:
     
     selected_year = st.select_slider(
         "Data year",
-        options=[2021, 2022, 2023, 2024],
-        value=2024,
+        options=available_years(),
+        value=max(available_years()),
         help="Choose the FARS reporting year."
     )
     
@@ -369,7 +342,7 @@ st.markdown(
 # Clarify that this is filtered motorcycle data from NHTSA
 st.info(
     "**Data note:** This analysis filters NHTSA FARS (a comprehensive database of ALL traffic fatalities) "
-    "to show **motorcyclists only** (PER_TYP = 4). Totals represent fatal motorcycle crashes, not all road fatalities."
+    "to show **motorcyclists only** (identified by motorcycle body type). Totals represent fatal motorcycle crashes, not all road fatalities."
 )
 
 # Headline metrics

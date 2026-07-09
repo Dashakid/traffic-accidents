@@ -5,5 +5,8 @@ __pycache__/
 .DS_Store
 .streamlit/secrets.toml
 
-# Large FARS data files (downloaded separately from NHTSA)
-traffic-accidents/*.csv
+# Large raw FARS data files (downloaded separately from NHTSA)
+# The slim, pre-built motorcycle_data.csv IS committed so Streamlit Cloud works.
+traffic-accidents/accident.csv
+traffic-accidents/person.csv
+traffic-accidents/vehicle.csv
