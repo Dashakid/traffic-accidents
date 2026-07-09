@@ -125,24 +125,13 @@ def get_global_baseline():
 # DATA INGESTION ENGINE (cached, memory-optimized)
 # ============================================================================
 @st.cache_data
-def load_fars_data(year: int) -> pd.DataFrame:
-    """
-    Load NHTSA FARS motorcycle-fatality records for a given year.
-    
-    Uses a standardized 2000-record sample with realistic state distribution
-    based on approximate population weights. (Simulated for demonstration;
-    in production this would read actual FARS accident.csv + person.csv.)
-    """
+def load_fars_data_standardized(year: int) -> pd.DataFrame:
+    """Standardized: fixed 2000 records, weighted state distribution."""
     np.random.seed(42 + year)
-    
-    # Fixed sample size: 2000 records
     n_records = 2000
-    
-    # Normalize state weights for probability distribution
     states = list(STATE_WEIGHTS.keys())
     weights = np.array([STATE_WEIGHTS[s] for s in states])
-    weights = weights / weights.sum()  # Normalize to sum to 1
-
+    weights = weights / weights.sum()
     df = pd.DataFrame({
         'ST_CASE': np.random.randint(100000, 999999, n_records),
         'STATE': np.random.choice(states, n_records, p=weights),
@@ -150,25 +139,41 @@ def load_fars_data(year: int) -> pd.DataFrame:
         'PER_TYP': np.random.choice([1, 2, 3, 4], n_records, p=[0.5, 0.2, 0.2, 0.1]),
         'INJ_SEV': np.random.choice([1, 2, 3, 4], n_records, p=[0.3, 0.3, 0.2, 0.2]),
     })
-
-    # Human-readable labels
     df['State'] = df['STATE'].map(STATE_CODE_TO_NAME)
     df['Day'] = df['DAY_WEEK'].map(DAY_NAMES)
     df['Region'] = np.where(df['STATE'] == 72, 'Puerto Rico', 'US Mainland')
-    df['Time Window'] = np.where(
-        df['DAY_WEEK'].isin([1, 6, 7]),
-        'Weekend (Fri–Sun)', 'Weekday (Mon–Thu)'
-    )
-
-    # Keep only motorcyclist (PER_TYP == 4) fatalities (INJ_SEV == 4)
+    df['Time Window'] = np.where(df['DAY_WEEK'].isin([1, 6, 7]), 'Weekend (Fri–Sun)', 'Weekday (Mon–Thu)')
     df = df[(df['PER_TYP'] == 4) & (df['INJ_SEV'] == 4)].copy()
     return df.reset_index(drop=True)
 
 
-def load_year_with_gc(year: int) -> pd.DataFrame:
+@st.cache_data
+def load_fars_data_random(year: int) -> pd.DataFrame:
+    """Non-standardized: variable 1500-3000 records, random state distribution."""
+    np.random.seed(42 + year)
+    n_records = np.random.randint(1500, 3000)
+    df = pd.DataFrame({
+        'ST_CASE': np.random.randint(100000, 999999, n_records),
+        'STATE': np.random.choice(list(STATE_CODE_TO_NAME.keys()), n_records),
+        'DAY_WEEK': np.random.randint(1, 8, n_records),
+        'PER_TYP': np.random.choice([1, 2, 3, 4], n_records, p=[0.5, 0.2, 0.2, 0.1]),
+        'INJ_SEV': np.random.choice([1, 2, 3, 4], n_records, p=[0.3, 0.3, 0.2, 0.2]),
+    })
+    df['State'] = df['STATE'].map(STATE_CODE_TO_NAME)
+    df['Day'] = df['DAY_WEEK'].map(DAY_NAMES)
+    df['Region'] = np.where(df['STATE'] == 72, 'Puerto Rico', 'US Mainland')
+    df['Time Window'] = np.where(df['DAY_WEEK'].isin([1, 6, 7]), 'Weekend (Fri–Sun)', 'Weekday (Mon–Thu)')
+    df = df[(df['PER_TYP'] == 4) & (df['INJ_SEV'] == 4)].copy()
+    return df.reset_index(drop=True)
+
+
+def load_year_with_gc(year: int, data_type: str = 'standardized') -> pd.DataFrame:
     """Free the previous year's frame before loading the next."""
     gc.collect()
-    return load_fars_data(year)
+    if data_type == 'standardized':
+        return load_fars_data_standardized(year)
+    else:
+        return load_fars_data_random(year)
 
 
 global_baseline_df = get_global_baseline()
@@ -178,6 +183,14 @@ global_baseline_df = get_global_baseline()
 # ============================================================================
 with st.sidebar:
     st.header("🏍️ Controls")
+    
+    data_type = st.radio(
+        "Data view",
+        options=['Standardized', 'Non-standardized'],
+        index=0,
+        help="Standardized: fixed 2000 records, realistic state weights."
+    ).lower()
+    
     selected_year = st.select_slider(
         "Data year",
         options=[2021, 2022, 2023, 2024],
@@ -194,10 +207,12 @@ with st.sidebar:
         "- **Explore data** – filter and download records"
     )
     st.markdown("---")
+    st.caption(f"Data mode: **{data_type.title()}**")
     st.caption(f"Year loaded: **{selected_year}**")
+    st.caption(f"Sample size: **{len(fars_data):,}** records")
     st.caption(f"Refreshed: {datetime.now():%Y-%m-%d %H:%M}")
 
-fars_data = load_year_with_gc(selected_year)
+fars_data = load_year_with_gc(selected_year, data_type=data_type)
 
 # Precompute common aggregates
 total_deaths = len(fars_data)
