@@ -346,6 +346,12 @@ st.markdown(
     f"into the **global** road-safety picture."
 )
 
+# Clarify that this is filtered motorcycle data from NHTSA
+st.info(
+    "**Data note:** This analysis filters NHTSA FARS (a comprehensive database of ALL traffic fatalities) "
+    "to show **motorcyclists only** (PER_TYP = 4). Totals represent fatal motorcycle crashes, not all road fatalities."
+)
+
 # Headline metrics
 c1, c2, c3, c4 = st.columns(4)
 c1.metric("Total motorcyclist fatalities", f"{total_deaths:,}")
