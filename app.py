@@ -89,6 +89,22 @@ STATE_NAME_TO_ABBR = {
 DAY_NAMES = {1: "Sunday", 2: "Monday", 3: "Tuesday", 4: "Wednesday",
              5: "Thursday", 6: "Friday", 7: "Saturday"}
 
+# State population weights (for realistic fatality distribution)
+# Approximate motorcycle accident share by state (larger/more urban states weighted higher)
+STATE_WEIGHTS = {
+    1: 1.5, 2: 0.2, 4: 1.2, 5: 0.6, 6: 3.5,  # AL, AK, AZ, AR, CA
+    8: 1.0, 9: 0.5, 10: 0.3, 11: 0.4, 12: 2.8,  # CO, CT, DE, DC, FL
+    13: 1.8, 15: 0.3, 16: 0.4, 17: 1.6, 18: 1.2,  # GA, HI, ID, IL, IN
+    19: 0.7, 20: 0.8, 21: 0.9, 22: 0.8, 23: 0.3,  # IA, KS, KY, LA, ME
+    24: 0.8, 25: 0.7, 26: 1.3, 27: 0.9, 28: 0.5,  # MD, MA, MI, MN, MS
+    29: 0.9, 30: 0.4, 31: 0.5, 32: 0.6, 33: 0.3,  # MO, MT, NE, NV, NH
+    34: 0.9, 35: 0.5, 36: 1.7, 37: 1.3, 38: 0.2,  # NJ, NM, NY, NC, ND
+    39: 1.4, 40: 0.9, 41: 0.7, 42: 1.1, 44: 0.2,  # OH, OK, OR, PA, RI
+    45: 0.8, 46: 0.3, 47: 1.0, 48: 2.5, 49: 0.5,  # SC, SD, TN, TX, UT
+    50: 0.2, 51: 1.1, 53: 0.9, 54: 0.4, 55: 0.6,  # VT, VA, WA, WV, WI
+    56: 0.3, 72: 0.4  # WY, PR
+}
+
 
 # ============================================================================
 # GLOBAL BASELINE DATA (WHO Global Status Report on Road Safety)
@@ -112,16 +128,24 @@ def get_global_baseline():
 def load_fars_data(year: int) -> pd.DataFrame:
     """
     Load NHTSA FARS motorcycle-fatality records for a given year.
-
-    (Simulated dataset for demonstration; in production this reads the
-    downloaded FARS accident.csv + person.csv for the selected year.)
+    
+    Uses a standardized 2000-record sample with realistic state distribution
+    based on approximate population weights. (Simulated for demonstration;
+    in production this would read actual FARS accident.csv + person.csv.)
     """
     np.random.seed(42 + year)
-    n_records = np.random.randint(1500, 3000)
+    
+    # Fixed sample size: 2000 records
+    n_records = 2000
+    
+    # Normalize state weights for probability distribution
+    states = list(STATE_WEIGHTS.keys())
+    weights = np.array([STATE_WEIGHTS[s] for s in states])
+    weights = weights / weights.sum()  # Normalize to sum to 1
 
     df = pd.DataFrame({
         'ST_CASE': np.random.randint(100000, 999999, n_records),
-        'STATE': np.random.choice(list(STATE_CODE_TO_NAME.keys()), n_records),
+        'STATE': np.random.choice(states, n_records, p=weights),
         'DAY_WEEK': np.random.randint(1, 8, n_records),
         'PER_TYP': np.random.choice([1, 2, 3, 4], n_records, p=[0.5, 0.2, 0.2, 0.1]),
         'INJ_SEV': np.random.choice([1, 2, 3, 4], n_records, p=[0.3, 0.3, 0.2, 0.2]),
