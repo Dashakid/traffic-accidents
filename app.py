@@ -125,7 +125,7 @@ def get_global_baseline():
 # DATA INGESTION ENGINE (cached, memory-optimized)
 # ============================================================================
 @st.cache_data
-def load_fars_data_standardized(year: int) -> pd.DataFrame:
+def load_fars_data_standardized(year: int, severity_filter: str = 'fatalities') -> pd.DataFrame:
     """Standardized: fixed 2000 records, weighted state distribution."""
     np.random.seed(42 + year)
     n_records = 2000
@@ -143,12 +143,14 @@ def load_fars_data_standardized(year: int) -> pd.DataFrame:
     df['Day'] = df['DAY_WEEK'].map(DAY_NAMES)
     df['Region'] = np.where(df['STATE'] == 72, 'Puerto Rico', 'US Mainland')
     df['Time Window'] = np.where(df['DAY_WEEK'].isin([1, 6, 7]), 'Weekend (Fri–Sun)', 'Weekday (Mon–Thu)')
-    df = df[(df['PER_TYP'] == 4) & (df['INJ_SEV'] == 4)].copy()
+    df = df[df['PER_TYP'] == 4].copy()
+    if severity_filter == 'fatalities':
+        df = df[df['INJ_SEV'] == 4]
     return df.reset_index(drop=True)
 
 
 @st.cache_data
-def load_fars_data_random(year: int) -> pd.DataFrame:
+def load_fars_data_random(year: int, severity_filter: str = 'fatalities') -> pd.DataFrame:
     """Non-standardized: variable 1500-3000 records, random state distribution."""
     np.random.seed(42 + year)
     n_records = np.random.randint(1500, 3000)
@@ -163,17 +165,19 @@ def load_fars_data_random(year: int) -> pd.DataFrame:
     df['Day'] = df['DAY_WEEK'].map(DAY_NAMES)
     df['Region'] = np.where(df['STATE'] == 72, 'Puerto Rico', 'US Mainland')
     df['Time Window'] = np.where(df['DAY_WEEK'].isin([1, 6, 7]), 'Weekend (Fri–Sun)', 'Weekday (Mon–Thu)')
-    df = df[(df['PER_TYP'] == 4) & (df['INJ_SEV'] == 4)].copy()
+    df = df[df['PER_TYP'] == 4].copy()
+    if severity_filter == 'fatalities':
+        df = df[df['INJ_SEV'] == 4]
     return df.reset_index(drop=True)
 
 
-def load_year_with_gc(year: int, data_type: str = 'standardized') -> pd.DataFrame:
+def load_year_with_gc(year: int, data_type: str = 'standardized', severity_filter: str = 'fatalities') -> pd.DataFrame:
     """Free the previous year's frame before loading the next."""
     gc.collect()
     if data_type == 'standardized':
-        return load_fars_data_standardized(year)
+        return load_fars_data_standardized(year, severity_filter=severity_filter)
     else:
-        return load_fars_data_random(year)
+        return load_fars_data_random(year, severity_filter=severity_filter)
 
 
 global_baseline_df = get_global_baseline()
@@ -197,6 +201,14 @@ with st.sidebar:
         value=2024,
         help="Choose the FARS reporting year."
     )
+    
+    injury_type = st.radio(
+        "Injury severity",
+        options=['Fatalities only', 'All accidents'],
+        index=0,
+        help="Fatalities: fatal injuries only. All accidents: includes non-fatal injuries too."
+    )
+    severity_filter = 'fatalities' if injury_type == 'Fatalities only' else 'all'
 
     st.markdown("---")
     st.markdown("### 📖 How to read this")
@@ -206,13 +218,17 @@ with st.sidebar:
         "- **Global context** – how the US compares worldwide\n"
         "- **Explore data** – filter and download records"
     )
+
+# Load data after controls defined
+fars_data = load_year_with_gc(selected_year, data_type=data_type, severity_filter=severity_filter)
+
+with st.sidebar:
     st.markdown("---")
     st.caption(f"Data mode: **{data_type.title()}**")
+    st.caption(f"Injury type: **{injury_type}**")
     st.caption(f"Year loaded: **{selected_year}**")
     st.caption(f"Sample size: **{len(fars_data):,}** records")
     st.caption(f"Refreshed: {datetime.now():%Y-%m-%d %H:%M}")
-
-fars_data = load_year_with_gc(selected_year, data_type=data_type)
 
 # Precompute common aggregates
 total_deaths = len(fars_data)
