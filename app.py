@@ -183,6 +183,14 @@ def load_year_with_gc(year: int, data_type: str = 'standardized', severity_filte
 global_baseline_df = get_global_baseline()
 
 # ============================================================================
+# SESSION STATE — track control changes for cache invalidation
+# ============================================================================
+if 'prev_data_type' not in st.session_state:
+    st.session_state.prev_data_type = None
+if 'prev_severity' not in st.session_state:
+    st.session_state.prev_severity = None
+
+# ============================================================================
 # SIDEBAR — controls + guide
 # ============================================================================
 with st.sidebar:
@@ -219,6 +227,14 @@ with st.sidebar:
         "- **Explore data** – filter and download records"
     )
 
+# Detect mode/severity changes for cache invalidation
+data_mode_changed = data_type != st.session_state.prev_data_type
+severity_changed = severity_filter != st.session_state.prev_severity
+
+# Update session state
+st.session_state.prev_data_type = data_type
+st.session_state.prev_severity = severity_filter
+
 # Load data after controls defined
 fars_data = load_year_with_gc(selected_year, data_type=data_type, severity_filter=severity_filter)
 
@@ -228,6 +244,8 @@ with st.sidebar:
     st.caption(f"Injury type: **{injury_type}**")
     st.caption(f"Year loaded: **{selected_year}**")
     st.caption(f"Sample size: **{len(fars_data):,}** records")
+    if data_mode_changed or severity_changed:
+        st.success("✨ Data refreshed", icon="🔄")
     st.caption(f"Refreshed: {datetime.now():%Y-%m-%d %H:%M}")
 
 # Precompute common aggregates
