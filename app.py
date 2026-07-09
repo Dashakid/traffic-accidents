@@ -122,6 +122,62 @@ def get_global_baseline():
 
 
 # ============================================================================
+# REAL DATA DETECTION (checks for NHTSA FARS CSV files)
+# ============================================================================
+import os
+
+def has_real_data() -> bool:
+    """Check if real NHTSA FARS data files exist locally."""
+    data_dir = os.path.join(os.getcwd(), "traffic-accidents")
+    acc_exists = os.path.exists(os.path.join(data_dir, "accident.csv"))
+    per_exists = os.path.exists(os.path.join(data_dir, "person.csv"))
+    return acc_exists and per_exists
+
+
+@st.cache_data
+def load_real_fars_data(year: int, severity_filter: str = 'fatalities') -> pd.DataFrame:
+    """Load real NHTSA FARS data from local CSV files."""
+    data_dir = os.path.join(os.getcwd(), "traffic-accidents")
+    acc_df = pd.read_csv(os.path.join(data_dir, "accident.csv"), low_memory=False)
+    per_df = pd.read_csv(os.path.join(data_dir, "person.csv"), low_memory=False)
+    
+    # Standardize column names
+    acc_df.columns = [c.upper() for c in acc_df.columns]
+    per_df.columns = [c.upper() for c in per_df.columns]
+    
+    # Filter by year if available
+    if 'YEAR' in acc_df.columns:
+        acc_df = acc_df[acc_df['YEAR'] == year]
+    
+    # Merge on case ID
+    merged = acc_df.merge(per_df, on='ST_CASE', how='inner')
+    
+    # Filter: motorcyclists (PER_TYP == 4)
+    merged = merged[merged['PER_TYP'] == 4].copy()
+    
+    # Filter by severity
+    if severity_filter == 'fatalities':
+        merged = merged[merged['INJ_SEV'] == 4]
+    
+    # Map state codes to names
+    if 'STATE' in merged.columns:
+        merged['State'] = merged['STATE'].map(STATE_CODE_TO_NAME)
+    
+    # Add region indicator
+    merged['Region'] = merged['STATE'].apply(
+        lambda x: 'Puerto Rico' if x == 72 else 'US Mainland'
+    )
+    
+    # Add time window (weekday vs weekend)
+    if 'DAY_WEEK' in merged.columns:
+        merged['Time Window'] = merged['DAY_WEEK'].apply(
+            lambda x: 'Weekend (Fri–Sun)' if x in [1, 6, 7] else 'Weekday (Mon–Thu)'
+        )
+    
+    return merged.reset_index(drop=True)
+
+
+# ============================================================================
 # DATA INGESTION ENGINE (cached, memory-optimized)
 # ============================================================================
 @st.cache_data
@@ -171,13 +227,28 @@ def load_fars_data_random(year: int, severity_filter: str = 'fatalities') -> pd.
     return df.reset_index(drop=True)
 
 
-def load_year_with_gc(year: int, data_type: str = 'standardized', severity_filter: str = 'fatalities') -> pd.DataFrame:
-    """Free the previous year's frame before loading the next."""
+def load_year_with_gc(year: int, data_type: str = 'standardized', severity_filter: str = 'fatalities') -> tuple:
+    """
+    Load data (real if available, simulated otherwise).
+    Returns (dataframe, data_source_label).
+    """
     gc.collect()
+    
+    # Try real data first
+    if has_real_data():
+        try:
+            df = load_real_fars_data(year, severity_filter=severity_filter)
+            return df, "📊 Real NHTSA FARS Data"
+        except Exception as e:
+            st.warning(f"Could not load real data: {e}. Falling back to simulated.")
+    
+    # Fall back to simulated
     if data_type == 'standardized':
-        return load_fars_data_standardized(year, severity_filter=severity_filter)
+        df = load_fars_data_standardized(year, severity_filter=severity_filter)
     else:
-        return load_fars_data_random(year, severity_filter=severity_filter)
+        df = load_fars_data_random(year, severity_filter=severity_filter)
+    
+    return df, "🎲 Simulated Data (for demo)"
 
 
 global_baseline_df = get_global_baseline()
@@ -236,7 +307,7 @@ st.session_state.prev_data_type = data_type
 st.session_state.prev_severity = severity_filter
 
 # Load data after controls defined
-fars_data = load_year_with_gc(selected_year, data_type=data_type, severity_filter=severity_filter)
+fars_data, data_source = load_year_with_gc(selected_year, data_type=data_type, severity_filter=severity_filter)
 
 with st.sidebar:
     st.markdown("---")
@@ -246,6 +317,7 @@ with st.sidebar:
     st.caption(f"Sample size: **{len(fars_data):,}** records")
     if data_mode_changed or severity_changed:
         st.success("✨ Data refreshed", icon="🔄")
+    st.caption(data_source)  # Show data source badge
     st.caption(f"Refreshed: {datetime.now():%Y-%m-%d %H:%M}")
 
 # Precompute common aggregates
@@ -267,6 +339,7 @@ top_state = state_counts.iloc[0]['State'] if not state_counts.empty else "—"
 # ============================================================================
 st.title("🏍️ Motorcycle Safety Analysis")
 st.caption("Made by **Gian-Carlo Javier**")
+st.markdown(data_source)  # Display data source badge at top
 st.markdown(
     f"Exploring **where** and **when** motorcyclist fatalities happen across the "
     f"United States and Puerto Rico in **{selected_year}**, and how the US fits "
