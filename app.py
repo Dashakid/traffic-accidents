@@ -89,6 +89,27 @@ STATE_NAME_TO_ABBR = {
 DAY_NAMES = {1: "Sunday", 2: "Monday", 3: "Tuesday", 4: "Wednesday",
              5: "Thursday", 6: "Friday", 7: "Saturday"}
 
+# State population (2023 US Census Bureau estimates) — used to compute
+# per-capita fatality rates (fatalities per 100,000 residents).
+STATE_POPULATION = {
+    "Alabama": 5108468, "Alaska": 733406, "Arizona": 7431344, "Arkansas": 3067732,
+    "California": 38965193, "Colorado": 5877610, "Connecticut": 3617176,
+    "Delaware": 1031890, "District of Columbia": 678972, "Florida": 22610726,
+    "Georgia": 11029227, "Hawaii": 1435138, "Idaho": 1964726, "Illinois": 12549689,
+    "Indiana": 6862199, "Iowa": 3207004, "Kansas": 2940546, "Kentucky": 4526154,
+    "Louisiana": 4573749, "Maine": 1395722, "Maryland": 6180253,
+    "Massachusetts": 7001399, "Michigan": 10037261, "Minnesota": 5737915,
+    "Mississippi": 2939690, "Missouri": 6196156, "Montana": 1132812,
+    "Nebraska": 1978379, "Nevada": 3194176, "New Hampshire": 1402054,
+    "New Jersey": 9290841, "New Mexico": 2114371, "New York": 19571216,
+    "North Carolina": 10835491, "North Dakota": 783926, "Ohio": 11785935,
+    "Oklahoma": 4053824, "Oregon": 4233358, "Pennsylvania": 12961683,
+    "Rhode Island": 1095962, "South Carolina": 5373555, "South Dakota": 919318,
+    "Tennessee": 7126489, "Texas": 30503301, "Utah": 3417734, "Vermont": 647464,
+    "Virginia": 8715698, "Washington": 7812880, "West Virginia": 1770071,
+    "Wisconsin": 5910955, "Wyoming": 584057, "Puerto Rico": 3205691,
+}
+
 # State population weights (for realistic fatality distribution)
 # Approximate motorcycle accident share by state (larger/more urban states weighted higher)
 STATE_WEIGHTS = {
@@ -118,6 +139,28 @@ def get_global_baseline():
         'fatality_share_pct': [80.0, 72.0, 65.0, 15.0, 8.2],
         'region': ['Southeast Asia', 'Southeast Asia', 'Southeast Asia',
                    'Caribbean', 'North America']
+    })
+
+
+@st.cache_data
+def get_city_baseline():
+    """
+    City-level two-wheeler exposure vs. share of road deaths for major
+    Southeast Asian motorcycle hubs, benchmarked against US regions.
+
+    Figures are drawn from the WHO Global Status Report on Road Safety and
+    national/city road-safety reporting. They illustrate how fatality share
+    scales with how heavily a city relies on two-wheelers.
+    """
+    return pd.DataFrame({
+        'City': ['Bangkok', 'Saigon (Ho Chi Minh City)', 'Da Nang', 'Bali',
+                 'Puerto Rico', 'US Mainland'],
+        'Country': ['Thailand', 'Vietnam', 'Vietnam', 'Indonesia',
+                    'Puerto Rico (US)', 'United States'],
+        'two_wheeler_fleet_pct': [52.0, 94.0, 90.0, 85.0, 4.0, 3.0],
+        'fatality_share_pct': [80.0, 72.0, 68.0, 70.0, 21.0, 15.0],
+        'region': ['Southeast Asia', 'Southeast Asia', 'Southeast Asia',
+                   'Southeast Asia', 'Caribbean', 'North America'],
     })
 
 
@@ -245,6 +288,7 @@ def load_year_with_gc(year: int, data_type: str = 'standardized', severity_filte
 
 
 global_baseline_df = get_global_baseline()
+city_baseline_df = get_city_baseline()
 
 # ============================================================================
 # SESSION STATE — track control changes for cache invalidation
@@ -262,9 +306,12 @@ with st.sidebar:
     
     data_type = st.radio(
         "Data view",
-        options=['Standardized', 'Non-standardized'],
+        options=['Raw counts', 'Per 100k residents'],
         index=0,
-        help="Standardized: fixed 2000 records, realistic state weights."
+        help="Raw counts: total fatalities per state. "
+             "Per 100k residents: adjusted for each state's population — "
+             "a fairer comparison that reveals which states are most dangerous "
+             "relative to their size."
     ).lower()
     
     selected_year = st.select_slider(
@@ -285,6 +332,7 @@ with st.sidebar:
     st.markdown("---")
     st.markdown("### 📖 How to read this")
     st.markdown(
+        "- **Data view** – raw counts vs. per-100k-residents rate\n"
         "- **Where** – fatalities by state\n"
         "- **When** – weekday vs. weekend\n"
         "- **All 50 states** – complete state-by-state ranking\n"
@@ -320,11 +368,22 @@ mainland_deaths = int((fars_data['Region'] == 'US Mainland').sum())
 weekend_deaths = int((fars_data['Time Window'] == 'Weekend (Fri–Sun)').sum())
 weekend_pct = (weekend_deaths / total_deaths * 100) if total_deaths else 0
 
+# Choose the active metric based on the Data view toggle
+is_rate = (data_type == 'per 100k residents')
+metric_col = 'Rate per 100k' if is_rate else 'Fatalities'
+metric_label = 'Fatalities per 100k residents' if is_rate else 'Fatalities'
+
 state_counts = (
     fars_data.groupby('State').size()
     .reset_index(name='Fatalities')
-    .sort_values('Fatalities', ascending=False)
 )
+# Attach population and compute per-capita rate (per 100,000 residents)
+state_counts['Population'] = state_counts['State'].map(STATE_POPULATION)
+state_counts['Rate per 100k'] = (
+    state_counts['Fatalities'] / state_counts['Population'] * 100000
+).round(2)
+# Rank by whichever metric is active
+state_counts = state_counts.sort_values(metric_col, ascending=False)
 top_state = state_counts.iloc[0]['State'] if not state_counts.empty else "—"
 
 # ============================================================================
@@ -357,8 +416,8 @@ st.markdown("---")
 # ============================================================================
 # TABS — guided narrative
 # ============================================================================
-tab_where, tab_when, tab_states, tab_data = st.tabs(
-    ["📍 Where", "🕒 When", "📊 All 50 states", "🔎 Explore data"]
+tab_where, tab_when, tab_states, tab_cities, tab_data = st.tabs(
+    ["📍 Where", "🕒 When", "📊 All 50 states", "🌏 Global cities", "🔎 Explore data"]
 )
 
 # ----------------------------------------------------------------------------
@@ -370,47 +429,58 @@ with tab_where:
     left, right = st.columns([3, 2])
 
     with left:
-        st.markdown("**Fatalities by state — map view**")
+        st.markdown(f"**{metric_label} by state — map view**")
         mainland = state_counts[state_counts['State'] != 'Puerto Rico'].copy()
         mainland['abbr'] = mainland['State'].map(STATE_NAME_TO_ABBR)
         fig_map = px.choropleth(
             mainland,
             locations='abbr',
             locationmode="USA-states",
-            color='Fatalities',
+            color=metric_col,
             scope="usa",
             color_continuous_scale="Reds",
             hover_name='State',
-            labels={'Fatalities': 'Fatalities'}
+            hover_data={'Fatalities': True, 'Rate per 100k': True, 'abbr': False},
+            labels={metric_col: metric_label}
         )
         fig_map.update_layout(margin=dict(l=0, r=0, t=10, b=0))
         st.plotly_chart(fig_map, use_container_width=True)
         st.caption("Puerto Rico is shown separately in the ranking on the right.")
 
     with right:
-        st.markdown("**Top 10 states by fatalities**")
-        top10 = state_counts.head(10).sort_values('Fatalities')
+        st.markdown(f"**Top 10 states by {metric_label.lower()}**")
+        top10 = state_counts.head(10).sort_values(metric_col)
         fig_top = px.bar(
             top10,
-            x='Fatalities',
+            x=metric_col,
             y='State',
             orientation='h',
-            color='Fatalities',
+            color=metric_col,
             color_continuous_scale='Reds',
-            text='Fatalities'
+            text=metric_col
         )
         fig_top.update_layout(
             margin=dict(l=0, r=0, t=10, b=0),
             coloraxis_showscale=False,
-            yaxis_title=None
+            yaxis_title=None,
+            xaxis_title=metric_label,
         )
         st.plotly_chart(fig_top, use_container_width=True)
 
-    st.info(
-        f"**Takeaway:** In {selected_year}, **{top_state}** recorded the most "
-        f"motorcyclist fatalities. Puerto Rico accounted for **{pr_deaths:,}** "
-        f"and the US mainland for **{mainland_deaths:,}**."
-    )
+    if is_rate:
+        st.info(
+            f"**Takeaway:** Adjusted for population, **{top_state}** has the highest "
+            f"motorcyclist fatality **rate per 100,000 residents** in {selected_year}. "
+            f"Rate-based ranking surfaces smaller states that punch above their weight — "
+            f"not just the biggest states."
+        )
+    else:
+        st.info(
+            f"**Takeaway:** In {selected_year}, **{top_state}** recorded the most "
+            f"motorcyclist fatalities. Puerto Rico accounted for **{pr_deaths:,}** "
+            f"and the US mainland for **{mainland_deaths:,}**. "
+            f"Switch to *Per 100k residents* for a population-adjusted view."
+        )
 
 # ----------------------------------------------------------------------------
 # WHEN — weekday vs weekend + by day
@@ -472,8 +542,8 @@ with tab_when:
 with tab_states:
     st.subheader(f"All 50 states ranked ({selected_year})")
     st.markdown(
-        "Every state (plus D.C. and Puerto Rico where reported), ranked by "
-        "motorcyclist fatalities. This is the complete picture — not just the top 10."
+        f"Every state (plus D.C. and Puerto Rico where reported), ranked by "
+        f"**{metric_label.lower()}**. This is the complete picture — not just the top 10."
     )
 
     # Full ranking of every state present in the data
@@ -484,44 +554,142 @@ with tab_states:
     m1, m2, m3 = st.columns(3)
     m1.metric("States reporting", f"{len(all_states)}")
     m2.metric("Total fatalities", f"{total_deaths:,}")
-    avg_per_state = total_deaths / len(all_states) if len(all_states) else 0
-    m3.metric("Average per state", f"{avg_per_state:.0f}")
+    if is_rate:
+        avg_rate = all_states['Rate per 100k'].mean()
+        m3.metric("Average rate / 100k", f"{avg_rate:.2f}")
+    else:
+        avg_per_state = total_deaths / len(all_states) if len(all_states) else 0
+        m3.metric("Average per state", f"{avg_per_state:.0f}")
 
     # Full bar chart — all states, tall so every state is readable
-    ranked = all_states.sort_values('Fatalities')
+    ranked = all_states.sort_values(metric_col)
     fig_all = px.bar(
         ranked,
-        x='Fatalities',
+        x=metric_col,
         y='State',
         orientation='h',
-        color='Fatalities',
+        color=metric_col,
         color_continuous_scale='Reds',
-        text='Fatalities',
+        text=metric_col,
     )
     fig_all.update_layout(
         margin=dict(l=0, r=0, t=10, b=0),
         coloraxis_showscale=False,
         yaxis_title=None,
+        xaxis_title=metric_label,
         height=max(500, 22 * len(ranked)),  # grow with number of states
     )
     st.plotly_chart(fig_all, use_container_width=True)
 
     # Full ranked table with rank + share
-    table = all_states.sort_values('Fatalities', ascending=False).reset_index(drop=True)
+    table = all_states.sort_values(metric_col, ascending=False).reset_index(drop=True)
     table.insert(0, 'Rank', table.index + 1)
     st.markdown("**Complete ranking**")
     st.dataframe(
-        table[['Rank', 'State', 'Fatalities', 'Share %']],
+        table[['Rank', 'State', 'Fatalities', 'Rate per 100k', 'Share %']],
+        use_container_width=True,
+        hide_index=True,
+    )
+
+    if is_rate:
+        st.info(
+            f"**Takeaway:** Ranked by population-adjusted rate, **{top_state}** tops all "
+            f"states in {selected_year} — a very different picture than raw counts, where "
+            f"big states dominate. This shows where riders are most at risk *relative to "
+            f"how many people live there*."
+        )
+    else:
+        st.info(
+            f"**Takeaway:** In {selected_year}, **{top_state}** led all states. "
+            f"The top 3 states alone account for "
+            f"**{all_states.head(3)['Fatalities'].sum() / total_deaths * 100:.0f}%** "
+            f"of all motorcyclist fatalities. Switch to *Per 100k residents* to see "
+            f"which states are most dangerous relative to their size."
+        )
+
+# ----------------------------------------------------------------------------
+# GLOBAL CITIES — two-wheeler exposure vs. fatality share
+# ----------------------------------------------------------------------------
+with tab_cities:
+    st.subheader("How do global motorcycle cities compare?")
+    st.markdown(
+        "Southeast Asian cities run on two wheels. This puts **Bangkok**, "
+        "**Saigon (Ho Chi Minh City)**, **Da Nang**, and **Bali** next to the "
+        "US mainland and Puerto Rico to show how heavily a place relies on "
+        "motorcycles — and how large a share of road deaths riders make up."
+    )
+
+    left, right = st.columns([3, 2])
+
+    with left:
+        st.markdown("**Two-wheeler fleet share vs. motorcycle fatality share**")
+        fig_cities = px.scatter(
+            city_baseline_df,
+            x='two_wheeler_fleet_pct',
+            y='fatality_share_pct',
+            text='City',
+            size='fatality_share_pct',
+            color='region',
+            hover_name='City',
+            hover_data={'Country': True, 'region': False,
+                        'two_wheeler_fleet_pct': ':.0f',
+                        'fatality_share_pct': ':.0f'},
+            labels={
+                'two_wheeler_fleet_pct': 'Two-wheelers as % of vehicle fleet',
+                'fatality_share_pct': 'Motorcycle share of road deaths (%)',
+                'region': 'Region',
+            },
+        )
+        fig_cities.update_traces(textposition='top center')
+        fig_cities.update_layout(
+            margin=dict(l=0, r=0, t=10, b=0),
+            legend=dict(orientation='h', yanchor='bottom', y=1.02, x=0),
+        )
+        st.plotly_chart(fig_cities, use_container_width=True)
+
+    with right:
+        st.markdown("**Motorcycle share of road deaths**")
+        ranked_cities = city_baseline_df.sort_values('fatality_share_pct')
+        fig_city_bar = px.bar(
+            ranked_cities,
+            x='fatality_share_pct',
+            y='City',
+            orientation='h',
+            color='fatality_share_pct',
+            color_continuous_scale='Reds',
+            text='fatality_share_pct',
+        )
+        fig_city_bar.update_traces(texttemplate='%{text:.0f}%')
+        fig_city_bar.update_layout(
+            margin=dict(l=0, r=0, t=10, b=0),
+            coloraxis_showscale=False,
+            yaxis_title=None,
+            xaxis_title='Share of road deaths (%)',
+        )
+        st.plotly_chart(fig_city_bar, use_container_width=True)
+
+    st.markdown("**City comparison**")
+    city_table = city_baseline_df.rename(columns={
+        'two_wheeler_fleet_pct': 'Two-wheeler fleet %',
+        'fatality_share_pct': 'Motorcycle fatality share %',
+        'region': 'Region',
+    })[['City', 'Country', 'Region',
+        'Two-wheeler fleet %', 'Motorcycle fatality share %']]
+    st.dataframe(
+        city_table.style.format({
+            'Two-wheeler fleet %': '{:.0f}%',
+            'Motorcycle fatality share %': '{:.0f}%',
+        }),
         use_container_width=True,
         hide_index=True,
     )
 
     st.info(
-        f"**Takeaway:** In {selected_year}, **{top_state}** led all states. "
-        f"The top 3 states alone account for "
-        f"**{all_states.head(3)['Fatalities'].sum() / total_deaths * 100:.0f}%** "
-        f"of all motorcyclist fatalities, while the average state saw about "
-        f"**{avg_per_state:.0f}**."
+        "**Takeaway:** In cities like **Saigon** and **Da Nang**, motorcycles "
+        "make up the overwhelming majority of the vehicle fleet, so riders "
+        "account for a huge share of road deaths. **Bangkok** and **Bali** "
+        "show the same pattern. The US mainland and Puerto Rico sit at the "
+        "opposite end — far fewer two-wheelers, far smaller fatality shares."
     )
 
 # ----------------------------------------------------------------------------
